@@ -1,0 +1,8 @@
+<resources>
+    <color name="neon_background">#031A27</color>
+    <color name="neon_surface">#082233</color>
+    <color name="neon_primary">#05E6FF</color>
+    <color name="neon_on_primary">#FFFFFF</color>
+    <color name="neon_text_primary">#F5F5FF</color>
+    <color name="neon_text_secondary">#A0B8D0</color>
+</resources>
