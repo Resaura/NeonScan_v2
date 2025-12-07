@@ -1,9 +1,10 @@
-package com.neonscan.app.ui.files
+﻿package com.neonscan.app.ui.files
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,11 +14,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -33,16 +36,19 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalConfiguration
 import com.neonscan.app.core.DateFormatter
 import com.neonscan.app.domain.model.ScanDocument
 import com.neonscan.app.domain.model.ScanType
@@ -61,19 +67,24 @@ fun FileDetailScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameValue by remember(document?.title) { mutableStateOf(document?.title.orEmpty()) }
-    var imageBitmap by remember(document?.path) { mutableStateOf<Bitmap?>(null) }
+    var pagePaths by remember(document?.path) { mutableStateOf<List<String>>(emptyList()) }
+    var currentPageIndex by remember(document?.path) { mutableStateOf(0) }
+    val pageBitmaps = remember { mutableStateMapOf<Int, Bitmap?>() }
     val scrollState = rememberScrollState()
     val maxImageHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.5f).coerceAtLeast(200.dp)
+    val density = LocalDensity.current
 
     LaunchedEffect(document?.path) {
         if (document?.path.isNullOrBlank()) {
-            imageBitmap = null
+            pagePaths = emptyList()
             return@LaunchedEffect
         }
         val path = document?.path ?: return@LaunchedEffect
-        imageBitmap = withContext(Dispatchers.IO) {
-            runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
-        }
+        val pages = collectPagePaths(path)
+        pagePaths = pages
+        currentPageIndex = 0
+        val first = loadBitmap(path)
+        pageBitmaps[0] = first
     }
 
     if (showDeleteConfirm) {
@@ -128,10 +139,18 @@ fun FileDetailScreen(
             }
         }
         Spacer(Modifier.height(4.dp))
-        if (document == null) {
+                if (document == null) {
             Text("Document introuvable", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         } else {
-            imageBitmap?.let { bmp ->
+            val pageCount = pagePaths.size.coerceAtLeast(1)
+            LaunchedEffect(currentPageIndex, pagePaths) {
+                val path = pagePaths.getOrNull(currentPageIndex) ?: document.path
+                if (pageBitmaps[currentPageIndex] == null && !path.isNullOrBlank()) {
+                    pageBitmaps[currentPageIndex] = loadBitmap(path)
+                }
+            }
+            val currentBitmap = pageBitmaps[currentPageIndex]
+            currentBitmap?.let { bmp ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -139,14 +158,67 @@ fun FileDetailScreen(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Aperçu du scan",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 220.dp),
-                        contentScale = ContentScale.FillWidth
-                    )
+                    val imgModifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 220.dp)
+                        .pointerInput(pagePaths, currentPageIndex) {
+                            val threshold = with(density) { 48.dp.toPx() }
+                            var accumulated = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { accumulated = 0f },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    accumulated += dragAmount
+                                    change.consume()
+                                },
+                                onDragEnd = {
+                                    when {
+                                        accumulated > threshold && currentPageIndex > 0 -> currentPageIndex -= 1
+                                        accumulated < -threshold && currentPageIndex < pageCount - 1 -> currentPageIndex += 1
+                                    }
+                                    accumulated = 0f
+                                }
+                            )
+                        }
+                    androidx.compose.foundation.layout.Box(
+                        modifier = imgModifier,
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "Apercu du scan",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 220.dp),
+                            contentScale = ContentScale.FillWidth
+                        )
+                        if (pageCount > 1) {
+                            IconButton(
+                                onClick = { if (currentPageIndex > 0) currentPageIndex -= 1 },
+                                enabled = currentPageIndex > 0,
+                                modifier = Modifier
+                                    .align(Alignment.CenterStart)
+                                    .size(48.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Page precedente")
+                            }
+                            IconButton(
+                                onClick = { if (currentPageIndex < pageCount - 1) currentPageIndex += 1 },
+                                enabled = currentPageIndex < pageCount - 1,
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .size(48.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Page suivante")
+                            }
+                            Text(
+                                "${currentPageIndex + 1}/$pageCount",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(8.dp)
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
             }
@@ -180,7 +252,7 @@ fun FileDetailScreen(
                     }
                     Text(typeLabel, style = MaterialTheme.typography.bodyMedium)
                     Text("Pages : ${document.pageCount}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Créé le : ${DateFormatter.format(document.createdAt)}", style = MaterialTheme.typography.bodyMedium)
+                    Text("CrÃ©Ã© le : ${DateFormatter.format(document.createdAt)}", style = MaterialTheme.typography.bodyMedium)
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -200,3 +272,26 @@ fun FileDetailScreen(
         }
     }
 }
+
+private suspend fun loadBitmap(path: String): Bitmap? = withContext(Dispatchers.IO) {
+    runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
+}
+
+private fun collectPagePaths(primaryPath: String): List<String> {
+    val primaryFile = java.io.File(primaryPath)
+    val parent = primaryFile.parentFile ?: return listOf(primaryPath)
+    val allowed = setOf("jpg", "jpeg", "png", "webp")
+    val regex = Regex("page_(\\d+)", RegexOption.IGNORE_CASE)
+    val files = parent.listFiles()
+        ?.filter { it.isFile && allowed.contains(it.extension.lowercase()) }
+        ?.sortedWith(
+            compareBy(
+                { regex.find(it.name)?.groups?.get(1)?.value?.toIntOrNull() ?: Int.MAX_VALUE },
+                { it.name }
+            )
+        )
+        ?.map { it.absolutePath }
+        ?: emptyList()
+    return if (files.isNotEmpty()) files else listOf(primaryPath)
+}
+

@@ -1,34 +1,33 @@
-package com.neonscan.app.ui.files
+﻿package com.neonscan.app.ui.files
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -37,29 +36,27 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.consumeAllChanges
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.neonscan.app.domain.model.ScanDocument
 import com.neonscan.app.domain.model.ScanType
@@ -69,8 +66,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
 @Composable
 fun FileEditScreen(
@@ -78,58 +73,69 @@ fun FileEditScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit
 ) {
-    var originalBitmap by remember(document?.path) { mutableStateOf<Bitmap?>(null) }
-    var bitmap by remember(document?.path) { mutableStateOf<Bitmap?>(null) }
-    var rotation by remember { mutableStateOf(0f) }
-    var cropRect by remember { mutableStateOf(CropRect()) }
-    var imageSize by remember { mutableStateOf(IntSize.Zero) }
-    var colorMode by remember { mutableStateOf(ColorMode.COLOR) }
-    var brightness by remember { mutableStateOf(0f) }
-    var contrast by remember { mutableStateOf(1f) }
+    var pagePaths by remember(document?.path) { mutableStateOf<List<String>>(emptyList()) }
+    var currentPageIndex by remember(document?.path) { mutableStateOf(0) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var showError by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
-    var previewBitmap by remember(document?.path) { mutableStateOf<Bitmap?>(null) }
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val pageStates = remember { mutableStateMapOf<Int, PageEditState>() }
+
+    suspend fun loadPageState(index: Int): PageEditState? {
+        val path = pagePaths.getOrNull(index) ?: return null
+        val bmp = loadBitmap(path)
+        return bmp?.let { PageEditState(base = it, preview = it) }
+    }
+
+    suspend fun ensurePage(index: Int) {
+        if (pageStates.containsKey(index)) return
+        val state = loadPageState(index)
+        if (state != null) {
+            pageStates[index] = state
+        } else {
+            showError = true
+        }
+    }
+
+    suspend fun loadPageForIndex(index: Int) {
+        if (index !in pagePaths.indices) return
+        ensurePage(index)
+        currentPageIndex = index
+    }
+
+    fun updatePage(index: Int, transform: (PageEditState) -> PageEditState) {
+        val current = pageStates[index] ?: return
+        val updated = transform(current)
+        val base = updated.base ?: return
+        scope.launch(Dispatchers.Default) {
+            val preview = applyPipeline(
+                source = base,
+                rotation = updated.rotation,
+                colorMode = updated.colorMode,
+                brightness = updated.brightness,
+                contrast = updated.contrast
+            )
+            withContext(Dispatchers.Main) {
+                pageStates[index] = updated.copy(preview = preview)
+            }
+        }
+    }
 
     LaunchedEffect(document?.path) {
         val path = document?.path
         if (path.isNullOrBlank()) {
-            originalBitmap = null
-            bitmap = null
+            pagePaths = emptyList()
             showError = true
             return@LaunchedEffect
         }
-        val loaded = withContext(Dispatchers.IO) {
-            runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
-        }
-        originalBitmap = loaded
-        bitmap = loaded
-        showError = loaded == null
-        cropRect = CropRect()
-        rotation = 0f
-        brightness = 0f
-        contrast = 1f
-        colorMode = ColorMode.COLOR
-        previewBitmap = loaded
+        val pages = collectPagePaths(path)
+        pagePaths = pages
+        currentPageIndex = 0
+        ensurePage(0)
     }
 
-    LaunchedEffect(originalBitmap, cropRect, rotation, brightness, contrast, colorMode) {
-        val src = originalBitmap ?: return@LaunchedEffect
-        previewBitmap = withContext(Dispatchers.Default) {
-            applyEdits(
-                source = src,
-                rotation = rotation,
-                cropRect = cropRect,
-                brightness = brightness,
-                contrast = contrast,
-                colorMode = colorMode
-            )
-        }
-    }
-
-    if (showError && (originalBitmap == null || previewBitmap == null)) {
+    if (showError && (pageStates[currentPageIndex]?.preview == null)) {
         AlertDialog(
             onDismissRequest = { showError = false; onBack() },
             title = { Text("Erreur") },
@@ -149,7 +155,7 @@ fun FileEditScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                "Aperçu indisponible pour ce type de document.",
+                "Apercu indisponible pour ce type de document.",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
             )
             Spacer(Modifier.height(12.dp))
@@ -157,8 +163,6 @@ fun FileEditScreen(
         }
         return
     }
-
-    val currentBitmap = bitmap
 
     Column(
         modifier = Modifier
@@ -173,7 +177,7 @@ fun FileEditScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = {
-                if (hasPendingChanges(originalBitmap, bitmap, rotation, brightness, contrast, colorMode, cropRect)) {
+                if (hasPendingChanges(pageStates)) {
                     showUnsavedDialog = true
                 } else onBack()
             }) {
@@ -183,91 +187,149 @@ fun FileEditScreen(
         }
         Spacer(Modifier.height(12.dp))
 
-        if (currentBitmap == null || previewBitmap == null) {
-            Text(
-                "Chargement de l'aperçu...",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-            )
+        val currentState = pageStates[currentPageIndex]
+        val bitmap = currentState?.preview
+        if (bitmap == null) {
+            Text("Chargement de l'Apercu...", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
             Spacer(Modifier.height(12.dp))
             Button(onClick = onBack) { Text("Retour") }
         } else {
-            Card(
+            val pageCount = pagePaths.size.coerceAtLeast(1)
+            val density = LocalDensity.current
+            val imageHeight = (LocalConfiguration.current.screenHeightDp * 0.75f).dp
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    .fillMaxWidth()
+                    .heightIn(min = 220.dp, max = imageHeight)
+                    .background(Color.Transparent)
+                    .pointerInput(pagePaths, currentPageIndex) {
+                        val threshold = with(density) { 48.dp.toPx() }
+                        var accumulated = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { accumulated = 0f },
+                            onHorizontalDrag = { change, dragAmount ->
+                                accumulated += dragAmount
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                when {
+                                    accumulated > threshold && currentPageIndex > 0 -> {
+                                        scope.launch { loadPageForIndex(currentPageIndex - 1) }
+                                    }
+                                    accumulated < -threshold && currentPageIndex < pageCount - 1 -> {
+                                        scope.launch { loadPageForIndex(currentPageIndex + 1) }
+                                    }
+                                }
+                                accumulated = 0f
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
             ) {
-                Box(
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Apercu",
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(currentBitmap.width.toFloat() / currentBitmap.height.toFloat(), matchHeightConstraintsFirst = false)
-                        .heightIn(min = 220.dp, max = 420.dp)
-                        .onGloballyPositioned { coords -> imageSize = coords.size }
-                ) {
-                    Image(
-                        bitmap = previewBitmap!!.asImageBitmap(),
-                        contentDescription = "Aperçu éditable",
-                        modifier = Modifier
                             .fillMaxWidth()
-                            .graphicsLayer(rotationZ = rotation),
-                        contentScale = ContentScale.Crop
+                            .height(imageHeight)
+                            .graphicsLayer(rotationZ = currentState.rotation),
+                        contentScale = ContentScale.Fit
                     )
-                    CropOverlay(
-                        cropRect = cropRect,
-                        onUpdate = { cropRect = it },
-                        containerSize = imageSize
+                    if (pageCount > 1) {
+                        IconButton(
+                        onClick = { scope.launch { loadPageForIndex(currentPageIndex - 1) } },
+                        enabled = currentPageIndex > 0,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .size(48.dp)
+                        ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Page precedente")
+                    }
+                    IconButton(
+                        onClick = { scope.launch { loadPageForIndex(currentPageIndex + 1) } },
+                        enabled = currentPageIndex < pageCount - 1,
+                        modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .size(48.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Page suivante")
+                    }
+                    Text(
+                        "${currentPageIndex + 1}/$pageCount",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(8.dp)
                     )
                 }
             }
             Spacer(Modifier.height(12.dp))
             Row(
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { rotation = (rotation - 90f) % 360f }) {
+                IconButton(
+                    onClick = { updatePage(currentPageIndex) { it.copy(rotation = (it.rotation - 90f) % 360f) } },
+                    modifier = Modifier.size(48.dp)
+                ) {
                     Icon(Icons.AutoMirrored.Filled.RotateLeft, contentDescription = "Rotation gauche")
                 }
-                IconButton(onClick = { rotation = (rotation + 90f) % 360f }) {
+                IconButton(
+                    onClick = { updatePage(currentPageIndex) { it.copy(rotation = (it.rotation + 90f) % 360f) } },
+                    modifier = Modifier.size(48.dp)
+                ) {
                     Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = "Rotation droite")
                 }
-                TextButton(onClick = { cropRect = CropRect() }) { Text("Réinitialiser le cadrage") }
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Mode")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ModeButton("Couleur", selected = colorMode == ColorMode.COLOR) { colorMode = ColorMode.COLOR }
-                    ModeButton("Gris", selected = colorMode == ColorMode.GRAYSCALE) { colorMode = ColorMode.GRAYSCALE }
-                    ModeButton("Noir & blanc", selected = colorMode == ColorMode.HIGH_CONTRAST) { colorMode = ColorMode.HIGH_CONTRAST }
-                }
+                Text("Mode", color = MaterialTheme.colorScheme.onSurface)
+                ModeButton("Couleur", selected = currentState.colorMode == ColorMode.COLOR) { updatePage(currentPageIndex) { it.copy(colorMode = ColorMode.COLOR) } }
+                ModeButton("Gris", selected = currentState.colorMode == ColorMode.GRAYSCALE) { updatePage(currentPageIndex) { it.copy(colorMode = ColorMode.GRAYSCALE) } }
+                ModeButton("Noir & blanc", selected = currentState.colorMode == ColorMode.HIGH_CONTRAST) { updatePage(currentPageIndex) { it.copy(colorMode = ColorMode.HIGH_CONTRAST) } }
             }
             Spacer(Modifier.height(8.dp))
-            Text("Luminosité")
+            Text("Luminosite", color = MaterialTheme.colorScheme.onSurface)
             Slider(
-                value = brightness,
-                onValueChange = { brightness = it },
+                value = currentState.brightness,
+                onValueChange = { value -> updatePage(currentPageIndex) { it.copy(brightness = value) } },
                 valueRange = -0.5f..0.5f
             )
-            Text("Contraste")
+            Text("Contraste", color = MaterialTheme.colorScheme.onSurface)
             Slider(
-                value = contrast,
-                onValueChange = { contrast = it },
+                value = currentState.contrast,
+                onValueChange = { value -> updatePage(currentPageIndex) { it.copy(contrast = value) } },
                 valueRange = 0.5f..1.5f
             )
             Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = {
-                val path = document.path
-                if (previewBitmap != null && originalBitmap != null && !isSaving && path.isNotBlank()) {
+            Button(
+                onClick = {
+                    if (isSaving) return@Button
                     isSaving = true
                     scope.launch(Dispatchers.IO) {
-                        saveBitmapToPath(previewBitmap!!, path)
+                        pagePaths.forEachIndexed { index, path ->
+                            ensurePage(index)
+                            val state = pageStates[index]
+                            val base = state?.base ?: loadBitmap(path)
+                            if (base != null && state != null) {
+                                val processed = applyPipeline(
+                                    source = base,
+                                    rotation = state.rotation,
+                                    colorMode = state.colorMode,
+                                    brightness = state.brightness,
+                                    contrast = state.contrast
+                                )
+                                saveBitmapToPath(processed, path)
+                                withContext(Dispatchers.Main) {
+                                    pageStates[index] = state.copy(preview = processed, base = processed)
+                                }
+                            }
+                        }
                         withContext(Dispatchers.Main) {
                             isSaving = false
                             onSaved()
                         }
-                    }
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -278,14 +340,19 @@ fun FileEditScreen(
             }
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = {
-                cropRect = CropRect()
-                rotation = 0f
-                brightness = 0f
-                contrast = 1f
-                colorMode = ColorMode.COLOR
-                bitmap = originalBitmap
+                val state = pageStates[currentPageIndex] ?: return@TextButton
+                val base = state.base
+                if (base != null) {
+                    pageStates[currentPageIndex] = state.copy(
+                        rotation = 0f,
+                        brightness = 0f,
+                        contrast = 1f,
+                        colorMode = ColorMode.COLOR,
+                        preview = base
+                    )
+                }
             }) {
-                Text("Réinitialiser toutes les modifications")
+                Text("Reinitialiser toutes les modifications")
             }
         }
     }
@@ -294,52 +361,33 @@ fun FileEditScreen(
         AlertDialog(
             onDismissRequest = { showUnsavedDialog = false },
             title = { Text("Quitter sans enregistrer ?") },
-            text = { Text("Les modifications non enregistrées seront perdues.") },
+            text = { Text("Les modifications non enregistrees seront perdues.") },
             confirmButton = { TextButton(onClick = { showUnsavedDialog = false; onBack() }) { Text("Quitter") } },
             dismissButton = { TextButton(onClick = { showUnsavedDialog = false }) { Text("Annuler") } }
         )
     }
 }
 
-private fun hasPendingChanges(
-    original: Bitmap?,
-    current: Bitmap?,
-    rotation: Float,
-    brightness: Float,
-    contrast: Float,
-    colorMode: ColorMode,
-    cropRect: CropRect
-): Boolean {
-    if (original == null || current == null) return false
-    if (rotation != 0f) return true
-    if (brightness != 0f) return true
-    if (contrast != 1f) return true
-    if (colorMode != ColorMode.COLOR) return true
-    if (cropRect != CropRect()) return true
-    return false
-}
+private fun hasPendingChanges(states: Map<Int, PageEditState>): Boolean =
+    states.values.any {
+        it.rotation != 0f ||
+            it.brightness != 0f ||
+            it.contrast != 1f ||
+            it.colorMode != ColorMode.COLOR
+    }
 
-private fun applyEdits(
+private fun applyPipeline(
     source: Bitmap,
     rotation: Float,
-    cropRect: CropRect,
+    colorMode: ColorMode,
     brightness: Float,
-    contrast: Float,
-    colorMode: ColorMode
+    contrast: Float
 ): Bitmap {
-    val matrix = Matrix()
-    matrix.postRotate(rotation)
+    val matrix = Matrix().apply { postRotate(rotation) }
     val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-
-    val left = (rotated.width * cropRect.left).toInt().coerceIn(0, rotated.width - 1)
-    val top = (rotated.height * cropRect.top).toInt().coerceIn(0, rotated.height - 1)
-    val width = (rotated.width * cropRect.width).toInt().coerceAtLeast(1).coerceAtMost(rotated.width - left)
-    val height = (rotated.height * cropRect.height).toInt().coerceAtLeast(1).coerceAtMost(rotated.height - top)
-    val cropped = Bitmap.createBitmap(rotated, left, top, width, height)
-
-    val adjusted = Bitmap.createBitmap(cropped.width, cropped.height, Bitmap.Config.ARGB_8888)
-    val pixels = IntArray(cropped.width * cropped.height)
-    cropped.getPixels(pixels, 0, cropped.width, 0, 0, cropped.width, cropped.height)
+    val adjusted = Bitmap.createBitmap(rotated.width, rotated.height, Bitmap.Config.ARGB_8888)
+    val pixels = IntArray(rotated.width * rotated.height)
+    rotated.getPixels(pixels, 0, rotated.width, 0, 0, rotated.width, rotated.height)
     val brightnessOffset = (brightness * 255).toInt()
     val contrastFactor = contrast.coerceIn(0.5f, 1.5f)
 
@@ -355,9 +403,9 @@ private fun applyEdits(
             }
             ColorMode.HIGH_CONTRAST -> {
                 val gray = (0.3 * r + 0.59 * g + 0.11 * b).toInt()
-        val boosted = if (gray > 128) 255 else 0
-        r = boosted; g = boosted; b = boosted
-    }
+                val boosted = if (gray > 128) 255 else 0
+                r = boosted; g = boosted; b = boosted
+            }
             else -> Unit
         }
 
@@ -370,7 +418,7 @@ private fun applyEdits(
         b = b.coerceIn(0, 255)
         pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
-    adjusted.setPixels(pixels, 0, cropped.width, 0, 0, cropped.width, cropped.height)
+    adjusted.setPixels(pixels, 0, rotated.width, 0, 0, rotated.width, rotated.height)
     return adjusted
 }
 
@@ -385,105 +433,61 @@ private fun saveBitmapToPath(bitmap: Bitmap, path: String) {
     }
 }
 
-private data class CropRect(
-    val left: Float = 0.1f,
-    val top: Float = 0.1f,
-    val width: Float = 0.8f,
-    val height: Float = 0.8f
+private data class PageEditState(
+    val base: Bitmap? = null,
+    val preview: Bitmap? = null,
+    val rotation: Float = 0f,
+    val colorMode: ColorMode = ColorMode.COLOR,
+    val brightness: Float = 0f,
+    val contrast: Float = 1f
 )
 
 private enum class ColorMode { COLOR, GRAYSCALE, HIGH_CONTRAST }
 
 @Composable
-private fun CropOverlay(
-    cropRect: CropRect,
-    onUpdate: (CropRect) -> Unit,
-    containerSize: IntSize
-) {
-    val handleRadius = 10.dp
-    val overlayColor = Color.Black.copy(alpha = 0.35f)
-
-    Canvas(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(cropRect, containerSize) {
-                detectDragGestures { change, dragAmount ->
-                    change.consumeAllChanges()
-                    if (containerSize.width == 0 || containerSize.height == 0) return@detectDragGestures
-                    val dx = dragAmount.x / containerSize.width.toFloat()
-                    val dy = dragAmount.y / containerSize.height.toFloat()
-                    val centerX = cropRect.left + cropRect.width / 2f
-                    val centerY = cropRect.top + cropRect.height / 2f
-                    val touchX = change.position.x / containerSize.width.toFloat()
-                    val touchY = change.position.y / containerSize.height.toFloat()
-                    val distanceToCenter = kotlin.math.abs(touchX - centerX) + kotlin.math.abs(touchY - centerY)
-                    val threshold = 0.15f
-                    val isCenterDrag = distanceToCenter < threshold
-                    if (isCenterDrag) {
-                        val newLeft = (cropRect.left + dx).coerceIn(0f, 1f - cropRect.width)
-                        val newTop = (cropRect.top + dy).coerceIn(0f, 1f - cropRect.height)
-                        onUpdate(cropRect.copy(left = newLeft, top = newTop))
-                    } else {
-                        val leftEdge = (cropRect.left + dx).coerceIn(0f, 1f)
-                        val topEdge = (cropRect.top + dy).coerceIn(0f, 1f)
-                        val rightEdge = (leftEdge + cropRect.width).coerceIn(0.2f, 1f)
-                        val bottomEdge = (topEdge + cropRect.height).coerceIn(0.2f, 1f)
-                        val newW = (rightEdge - leftEdge).coerceIn(0.2f, 1f)
-                        val newH = (bottomEdge - topEdge).coerceIn(0.2f, 1f)
-                        val clampedLeft = leftEdge.coerceIn(0f, 1f - newW)
-                        val clampedTop = topEdge.coerceIn(0f, 1f - newH)
-                        onUpdate(cropRect.copy(left = clampedLeft, top = clampedTop, width = newW, height = newH))
-                    }
-                }
-            }
-    ) {
-        val leftPx = cropRect.left * size.width
-        val topPx = cropRect.top * size.height
-        val widthPx = cropRect.width * size.width
-        val heightPx = cropRect.height * size.height
-
-        // Zones d'ombre autour du cadre pour laisser l'image visible à l'intérieur
-        drawRect(color = overlayColor, size = Size(size.width, topPx)) // haut
-        drawRect(color = overlayColor, topLeft = Offset(0f, topPx + heightPx), size = Size(size.width, size.height - (topPx + heightPx))) // bas
-        drawRect(color = overlayColor, topLeft = Offset(0f, topPx), size = Size(leftPx, heightPx)) // gauche
-        drawRect(color = overlayColor, topLeft = Offset(leftPx + widthPx, topPx), size = Size(size.width - (leftPx + widthPx), heightPx)) // droite
-
-        drawRect(
-            color = Color.White.copy(alpha = 0.9f),
-            topLeft = Offset(leftPx, topPx),
-            size = Size(widthPx, heightPx),
-            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
-        )
-        val handles = listOf(
-            Offset(leftPx, topPx),
-            Offset(leftPx + widthPx, topPx),
-            Offset(leftPx, topPx + heightPx),
-            Offset(leftPx + widthPx, topPx + heightPx)
-        )
-        handles.forEach { pos ->
-            drawCircle(
-                color = Color.White,
-                radius = handleRadius.toPx(),
-                center = pos
-            )
-        }
-    }
-}
-
-@Composable
 private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
     val borderColor = MaterialTheme.colorScheme.primary
-    Button(
+    val selectedColors = ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.primary,
+        contentColor = Color.White
+    )
+    val ghostColors = ButtonDefaults.buttonColors(
+        containerColor = Color.Transparent,
+        contentColor = Color.White
+    )
+    OutlinedButton(
         onClick = onClick,
-        colors = if (selected) {
-            ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
-        } else {
-            ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary)
-        },
+        colors = if (selected) selectedColors else ghostColors,
+        border = if (selected) null else BorderStroke(1.5.dp, borderColor),
         shape = RoundedCornerShape(12.dp),
-        border = if (selected) null else androidx.compose.foundation.BorderStroke(1.5.dp, borderColor),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        Text(label)
+        Text(label, color = Color.White)
     }
 }
+
+private suspend fun loadBitmap(path: String): Bitmap? = withContext(Dispatchers.IO) {
+    runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
+}
+
+private fun collectPagePaths(primaryPath: String): List<String> {
+    val primaryFile = File(primaryPath)
+    val parent = primaryFile.parentFile ?: return listOf(primaryPath)
+    val allowed = setOf("jpg", "jpeg", "png", "webp")
+    val regex = Regex("page_(\\d+)", RegexOption.IGNORE_CASE)
+    val files = parent.listFiles()
+        ?.filter { it.isFile && allowed.contains(it.extension.lowercase()) }
+        ?.sortedWith(
+            compareBy(
+                { regex.find(it.name)?.groups?.get(1)?.value?.toIntOrNull() ?: Int.MAX_VALUE },
+                { it.name }
+            )
+        )
+        ?.map { it.absolutePath }
+        ?: emptyList()
+    return if (files.isNotEmpty()) files else listOf(primaryPath)
+}
+
+
+
+

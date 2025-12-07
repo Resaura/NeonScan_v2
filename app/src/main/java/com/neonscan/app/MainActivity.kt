@@ -163,34 +163,45 @@ private fun NeonScanApp(documentScannerManager: DocumentScannerManager) {
             val tabs = NavItem.bottomItems
             val currentIndex = tabs.indexOfFirst { currentRoute?.startsWith(it.route) == true }.coerceAtLeast(0)
             val density = LocalDensity.current
+            val isTabSwipeEnabled = currentRoute?.let { route ->
+                tabs.any { route.startsWith(it.route) }
+            } ?: false
             fun navigateTo(index: Int) {
                 val target = tabs.getOrNull(index) ?: return
                 if (currentRoute == target.route) return
                 navController.navigate(target.route, noAnimOptions)
             }
 
-            Box(
-                modifier = Modifier
-                    .padding(innerPadding)
-                    .background(MaterialTheme.colorScheme.background)
-                    .pointerInput(currentIndex) {
-                        val threshold = with(density) { 48.dp.toPx() }
-                        var accumulated = 0f
-                        detectHorizontalDragGestures(
-                            onDragStart = { accumulated = 0f },
-                            onHorizontalDrag = { change, dragAmount ->
-                                accumulated += dragAmount
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                when {
-                                    accumulated > threshold && currentIndex > 0 -> navigateTo(currentIndex - 1)
-                                    accumulated < -threshold && currentIndex < tabs.lastIndex -> navigateTo(currentIndex + 1)
+            val boxModifier = Modifier
+                .padding(innerPadding)
+                .background(MaterialTheme.colorScheme.background)
+                .let { base ->
+                    if (!isTabSwipeEnabled) {
+                        base
+                    } else {
+                        base.pointerInput(currentIndex) {
+                            val threshold = with(density) { 48.dp.toPx() }
+                            var accumulated = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { accumulated = 0f },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    accumulated += dragAmount
+                                    change.consume()
+                                },
+                                onDragEnd = {
+                                    when {
+                                        accumulated > threshold && currentIndex > 0 -> navigateTo(currentIndex - 1)
+                                        accumulated < -threshold && currentIndex < tabs.lastIndex -> navigateTo(currentIndex + 1)
+                                    }
+                                    accumulated = 0f
                                 }
-                                accumulated = 0f
-                            }
-                        )
+                            )
+                        }
                     }
+                }
+
+            Box(
+                modifier = boxModifier
             ) {
                 NeonNavHost(
                     navController = navController,

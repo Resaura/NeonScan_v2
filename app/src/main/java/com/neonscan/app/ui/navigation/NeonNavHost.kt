@@ -1,4 +1,4 @@
-package com.neonscan.app.ui.navigation
+﻿package com.neonscan.app.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -132,9 +132,9 @@ fun NeonNavHost(
             val targetName = backStack.arguments?.getString("target") ?: ScanType.PDF.name
             val target = runCatching { ScanType.valueOf(targetName) }.getOrDefault(ScanType.PDF)
             ConvertScreen(
-                target = target,
-                onOpen = { /* TODO: démarrer conversion */ }
+                target = target
             )
         }
     }
 }
+

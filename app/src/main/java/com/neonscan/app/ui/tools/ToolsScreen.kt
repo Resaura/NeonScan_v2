@@ -1,4 +1,4 @@
-package com.neonscan.app.ui.tools
+﻿package com.neonscan.app.ui.tools
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -73,19 +73,19 @@ fun ToolsScreen(
         Spacer(Modifier.height(10.dp))
         ToolCard(
             title = "Simple",
-            subtitle = "Numériser un document unique",
+            subtitle = "Numeriser un document unique",
             icon = { Icon(Icons.Filled.CameraAlt, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             onClick = onSimpleScan
         )
         ToolCard(
             title = "Lot",
-            subtitle = "Numériser des documents par lot",
+            subtitle = "Numeriser des documents par lot",
             icon = { Icon(Icons.Filled.Collections, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             onClick = onBatchScan
         )
         ToolCard(
-            title = "Carte d'identité",
-            subtitle = "Scanner recto/verso d'une pièce",
+            title = "Carte d'identite",
+            subtitle = "Scanner recto/verso d'une piece",
             icon = { Icon(Icons.Filled.CreditCard, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             onClick = onIdScan
         )
@@ -106,13 +106,13 @@ fun ToolsScreen(
         )
         ToolCard(
             title = "Convertir en DOC",
-            subtitle = "Générer un fichier Word simple",
+            subtitle = "Generer un fichier Word simple",
             icon = { Icon(Icons.Filled.TextSnippet, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             onClick = { onStubSelected("DOC") }
         )
         ToolCard(
             title = "Convertir en JPG",
-            subtitle = "Exporter en image haute qualité",
+            subtitle = "Transformez vos documents en images JPG.",
             icon = { Icon(Icons.Filled.Image, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             onClick = { onStubSelected("IMAGE") }
         )
@@ -166,3 +166,6 @@ private fun ToolCard(
         }
     }
 }
+
+
+
