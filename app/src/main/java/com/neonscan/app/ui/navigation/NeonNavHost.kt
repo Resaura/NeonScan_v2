@@ -18,6 +18,7 @@ import com.neonscan.app.ui.account.AccountRoute
 import com.neonscan.app.ui.files.FileDetailScreen
 import com.neonscan.app.ui.files.FileEditScreen
 import com.neonscan.app.ui.files.FilesRoute
+import com.neonscan.app.ui.files.FolderEditScreen
 import com.neonscan.app.ui.home.HomeRoute
 import com.neonscan.app.ui.tools.ToolStubScreen
 import com.neonscan.app.ui.tools.ToolsRoute
@@ -53,7 +54,8 @@ fun NeonNavHost(
             FilesRoute(
                 viewModel = vm,
                 onNewScan = { onRequestScan(false) },
-                onOpenDocument = { id -> navController.navigate("file_detail/$id") }
+                onOpenDocument = { id -> navController.navigate("file_detail/$id") },
+                onOpenFolderEdit = { id -> navController.navigate("folder_edit/$id") }
             )
         }
         composable(
@@ -92,6 +94,18 @@ fun NeonNavHost(
                     vm.loadDetail(id)
                     navController.popBackStack()
                 }
+            )
+        }
+        composable(
+            route = "folder_edit/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.LongType })
+        ) { backStack ->
+            val vm: FilesViewModel = hiltViewModel()
+            val id = backStack.arguments?.getLong("id") ?: -1L
+            FolderEditScreen(
+                folderId = id,
+                viewModel = vm,
+                onBack = { navController.popBackStack() }
             )
         }
         composable(NavItem.Tools.route) {

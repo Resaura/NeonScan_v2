@@ -43,7 +43,13 @@ class ScanRepositoryImpl @Inject constructor(
     }
 
     override suspend fun createFolder(name: String): Long =
-        folderDao.insert(FolderEntity(name = name, createdAt = System.currentTimeMillis()))
+        folderDao.insert(
+            FolderEntity(
+                name = name,
+                createdAt = System.currentTimeMillis(),
+                sortOrder = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
+            )
+        )
 
     override fun getFolders(): Flow<List<Folder>> =
         kotlinx.coroutines.flow.combine(
@@ -56,10 +62,35 @@ class ScanRepositoryImpl @Inject constructor(
                     id = f.id,
                     name = f.name,
                     createdAt = f.createdAt,
-                    documentCount = countMap[f.id] ?: 0
+                    documentCount = countMap[f.id] ?: 0,
+                    sortOrder = f.sortOrder,
+                    colorHex = f.colorHex
                 )
             }
         }
+
+    override suspend fun getFolderById(id: Long): Folder? =
+        folderDao.getById(id)?.let {
+            Folder(
+                id = it.id,
+                name = it.name,
+                createdAt = it.createdAt,
+                sortOrder = it.sortOrder,
+                colorHex = it.colorHex
+            )
+        }
+
+    override suspend fun updateFolder(id: Long, name: String, colorHex: String) {
+        folderDao.updateFolder(id, name, colorHex)
+    }
+
+    override suspend fun deleteFolder(id: Long) {
+        folderDao.delete(id)
+    }
+
+    override suspend fun updateFolderOrders(order: List<Pair<Long, Int>>) {
+        order.forEach { (id, index) -> folderDao.updateSort(id, index) }
+    }
 
     private fun ScanDocumentEntity.toDomain() = ScanDocument(
         id = id,

@@ -12,6 +12,10 @@ import com.neonscan.app.domain.usecase.GetFoldersUseCase
 import com.neonscan.app.domain.usecase.AssignDocumentToFolderUseCase
 import com.neonscan.app.domain.usecase.GetDocumentsByFolderUseCase
 import com.neonscan.app.domain.usecase.RenameScanDocumentUseCase
+import com.neonscan.app.domain.usecase.GetFolderUseCase
+import com.neonscan.app.domain.usecase.UpdateFolderUseCase
+import com.neonscan.app.domain.usecase.DeleteFolderUseCase
+import com.neonscan.app.domain.usecase.ReorderFoldersUseCase
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -47,6 +51,18 @@ object UseCaseModule {
 
     @Provides
     fun provideGetFoldersUseCase(repository: ScanRepository) = GetFoldersUseCase(repository)
+
+    @Provides
+    fun provideGetFolderUseCase(repository: ScanRepository) = GetFolderUseCase(repository)
+
+    @Provides
+    fun provideUpdateFolderUseCase(repository: ScanRepository) = UpdateFolderUseCase(repository)
+
+    @Provides
+    fun provideDeleteFolderUseCase(repository: ScanRepository) = DeleteFolderUseCase(repository)
+
+    @Provides
+    fun provideReorderFoldersUseCase(repository: ScanRepository) = ReorderFoldersUseCase(repository)
 
     @Provides
     fun provideAssignDocumentToFolderUseCase(repository: ScanRepository) = AssignDocumentToFolderUseCase(repository)

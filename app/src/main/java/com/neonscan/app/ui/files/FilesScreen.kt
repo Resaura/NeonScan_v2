@@ -3,7 +3,9 @@ package com.neonscan.app.ui.files
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,15 +16,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
@@ -34,7 +40,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,11 +52,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Color
 import com.neonscan.app.core.DateFormatter
+import com.neonscan.app.domain.model.Folder
 import com.neonscan.app.domain.model.ScanDocument
 import com.neonscan.app.domain.model.ScanType
 import com.neonscan.app.presentation.files.FilesFilter
@@ -63,12 +69,14 @@ import com.neonscan.app.ui.common.PrimaryChip
 import com.neonscan.app.ui.common.SectionHeader
 import com.neonscan.app.ui.common.extractExtensionFromPath
 import com.neonscan.app.ui.common.fileTypeIconForExtension
+import android.graphics.Color as AndroidColor
 
 @Composable
 fun FilesRoute(
     viewModel: FilesViewModel,
     onNewScan: () -> Unit,
-    onOpenDocument: (Long) -> Unit
+    onOpenDocument: (Long) -> Unit,
+    onOpenFolderEdit: (Long) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     var newFolderName by remember { mutableStateOf("") }
@@ -88,6 +96,11 @@ fun FilesRoute(
         onToggleSelection = { id -> viewModel.toggleSelection(id) },
         onClearSelection = { viewModel.clearSelection() },
         onOpenFolder = { folderId -> viewModel.openFolder(folderId) },
+        onStartReorder = { viewModel.startReorderFolders() },
+        onUpdateReorder = { viewModel.updateReorderList(it) },
+        onFinishReorder = { save -> viewModel.finishReorder(save) },
+        onOpenFolderEdit = onOpenFolderEdit,
+        onDeleteFolder = { viewModel.deleteFolder(it) },
         newFolderName = newFolderName,
         onFolderNameChange = { newFolderName = it },
         onDismissFolderDialog = { viewModel.showCreateFolderDialog(false) },
@@ -95,6 +108,8 @@ fun FilesRoute(
         onDismissFilter = { showFilterSheet = false }
     )
 }
+
+private enum class FolderCardAction { Edit, Reorder, Delete }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -112,12 +127,19 @@ fun FilesScreen(
     onToggleSelection: (Long) -> Unit,
     onClearSelection: () -> Unit,
     onOpenFolder: (Long?) -> Unit,
+    onStartReorder: () -> Unit,
+    onUpdateReorder: (List<Folder>) -> Unit,
+    onFinishReorder: (Boolean) -> Unit,
+    onOpenFolderEdit: (Long) -> Unit,
+    onDeleteFolder: (Long) -> Unit,
     newFolderName: String,
     onFolderNameChange: (String) -> Unit,
     onDismissFolderDialog: () -> Unit,
     showFilterSheet: Boolean,
     onDismissFilter: () -> Unit
 ) {
+    var folderDeleteConfirm by remember { mutableStateOf<Long?>(null) }
+
     if (state.showCreateFolderDialog) {
         AlertDialog(
             onDismissRequest = onDismissFolderDialog,
@@ -140,6 +162,21 @@ fun FilesScreen(
             dismissButton = {
                 TextButton(onClick = onDismissFolderDialog) { Text("Annuler") }
             }
+        )
+    }
+
+    if (folderDeleteConfirm != null) {
+        AlertDialog(
+            onDismissRequest = { folderDeleteConfirm = null },
+            title = { Text("Supprimer le dossier") },
+            text = { Text("Voulez-vous vraiment supprimer ce dossier ?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    folderDeleteConfirm?.let { onDeleteFolder(it) }
+                    folderDeleteConfirm = null
+                }) { Text("Supprimer") }
+            },
+            dismissButton = { TextButton(onClick = { folderDeleteConfirm = null }) { Text("Annuler") } }
         )
     }
 
@@ -194,6 +231,21 @@ fun FilesScreen(
         }
         Spacer(Modifier.height(16.dp))
         SectionHeader(title = "Dossiers")
+        if (state.isReorderMode) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Réorganisation des dossiers", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlineChip(text = "Annuler", onClick = { onFinishReorder(false) })
+                    PrimaryChip(text = "Terminer", onClick = { onFinishReorder(true) })
+                }
+            }
+        }
         Spacer(Modifier.height(8.dp))
         if (state.folders.isEmpty()) {
             Text(
@@ -203,19 +255,62 @@ fun FilesScreen(
                 modifier = Modifier.padding(vertical = 12.dp)
             )
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                items(state.folders) { folder ->
-                    FolderCard(
-                        name = folder.name,
-                        documentCount = folder.documentCount,
-                        selected = state.currentFolderId == folder.id,
-                        onClick = { onOpenFolder(folder.id) }
-                    )
+            if (state.isReorderMode) {
+                val reorderList = state.reorderFolders.ifEmpty { state.folders }
+                val listState = rememberLazyListState()
+                LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    itemsIndexed(reorderList, key = { _, item -> item.id }) { index, folder ->
+                        var dragDelta by remember { mutableStateOf(0f) }
+                        FolderCardReorder(
+                            folder = folder,
+                            modifier = Modifier
+                                .pointerInput(reorderList) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDrag = { _, dragAmount ->
+                                            dragDelta += dragAmount.y
+                                        },
+                                        onDragEnd = {
+                                            val threshold = 40
+                                            var targetIndex = index
+                                            if (dragDelta > threshold && index < reorderList.lastIndex) targetIndex = index + 1
+                                            if (dragDelta < -threshold && index > 0) targetIndex = index - 1
+                                            dragDelta = 0f
+                                            if (targetIndex != index) {
+                                                val mutable = reorderList.toMutableList()
+                                                val item = mutable.removeAt(index)
+                                                mutable.add(targetIndex, item)
+                                                onUpdateReorder(mutable)
+                                            }
+                                        },
+                                        onDragCancel = { dragDelta = 0f }
+                                    )
+                                }
+                        )
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(state.folders) { folder ->
+                        FolderCard(
+                            name = folder.name,
+                            documentCount = folder.documentCount,
+                            selected = state.currentFolderId == folder.id,
+                            colorHex = folder.colorHex,
+                            onClick = { onOpenFolder(folder.id) },
+                            onMenu = { action ->
+                                when (action) {
+                                    FolderCardAction.Edit -> onOpenFolderEdit(folder.id)
+                                    FolderCardAction.Reorder -> onStartReorder()
+                                    FolderCardAction.Delete -> folderDeleteConfirm = folder.id
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -265,10 +360,17 @@ fun FilesScreen(
 }
 
 @Composable
-private fun FolderCard(name: String, documentCount: Int, selected: Boolean, onClick: () -> Unit) {
+private fun FolderCard(
+    name: String,
+    documentCount: Int,
+    selected: Boolean,
+    colorHex: String,
+    onClick: () -> Unit,
+    onMenu: (FolderCardAction) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
     Card(
-        modifier = Modifier
-            .fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
         shape = RoundedCornerShape(24.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -276,11 +378,59 @@ private fun FolderCard(name: String, documentCount: Int, selected: Boolean, onCl
         onClick = onClick
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Icon(Icons.Filled.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Filled.Folder, contentDescription = null, tint = Color(AndroidColor.parseColor(colorHex)))
+                Box {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "Menu dossier",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clickable { expanded = true }
+                    )
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        DropdownMenuItem(text = { Text("Modifier le dossier") }, onClick = { expanded = false; onMenu(FolderCardAction.Edit) })
+                        DropdownMenuItem(text = { Text("Réorganiser l'ordre des dossiers") }, onClick = { expanded = false; onMenu(FolderCardAction.Reorder) })
+                        DropdownMenuItem(text = { Text("Supprimer le dossier") }, onClick = { expanded = false; onMenu(FolderCardAction.Delete) })
+                    }
+                }
+            }
             Spacer(Modifier.height(24.dp))
             Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             Text("$documentCount document(s)", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        }
+    }
+}
+
+@Composable
+private fun FolderCardReorder(folder: Folder, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Filled.Folder, contentDescription = null, tint = Color(AndroidColor.parseColor(folder.colorHex)))
+                Column {
+                    Text(folder.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${folder.documentCount} document(s)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                }
+            }
+            Text("⋮⋮", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         }
     }
 }
@@ -366,7 +516,7 @@ private fun FileListItemWithMenu(
                 )
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     DropdownMenuItem(text = { Text("Modifier") }, onClick = { expanded = false; onEdit() })
-                    DropdownMenuItem(text = { Text("Supprimer") }, onClick = { expanded = false; onDelete() })
+                    DropdownMenuItem(text = { Text("Supprimer") }, onClick = { expanded = false; confirmDelete = true })
                     DropdownMenuItem(text = { Text("Ajouter à un dossier") }, onClick = { expanded = false; onAssign() })
                 }
             }
@@ -391,7 +541,7 @@ private fun FilterSheet(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Type", style = MaterialTheme.typography.bodyMedium)
-                androidx.compose.foundation.layout.FlowRow(
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -443,7 +593,7 @@ private fun FilterChipOption(label: String, selected: Boolean, onClick: () -> Un
 
 @Composable
 private fun AssignFolderDialog(
-    folders: List<com.neonscan.app.domain.model.Folder>,
+    folders: List<Folder>,
     onDismiss: () -> Unit,
     onAssign: (Long?) -> Unit
 ) {
@@ -469,7 +619,7 @@ private fun AssignFolderDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(Icons.Filled.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Filled.Folder, contentDescription = null, tint = Color(AndroidColor.parseColor(folder.colorHex)))
                                 Text(folder.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }

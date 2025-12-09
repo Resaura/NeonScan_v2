@@ -5,11 +5,15 @@ import androidx.lifecycle.viewModelScope
 import com.neonscan.app.domain.model.ScanDocument
 import com.neonscan.app.domain.usecase.AssignDocumentToFolderUseCase
 import com.neonscan.app.domain.usecase.CreateFolderUseCase
+import com.neonscan.app.domain.usecase.DeleteFolderUseCase
 import com.neonscan.app.domain.usecase.DeleteScanDocumentUseCase
 import com.neonscan.app.domain.usecase.GetDocumentsByFolderUseCase
 import com.neonscan.app.domain.usecase.GetFoldersUseCase
+import com.neonscan.app.domain.usecase.ReorderFoldersUseCase
 import com.neonscan.app.domain.usecase.GetScanDocumentUseCase
+import com.neonscan.app.domain.usecase.GetFolderUseCase
 import com.neonscan.app.domain.usecase.RenameScanDocumentUseCase
+import com.neonscan.app.domain.usecase.UpdateFolderUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +27,8 @@ data class FilesUiState(
     val documents: List<ScanDocument> = emptyList(),
     val baseDocuments: List<ScanDocument> = emptyList(), // documents bruts venant de la base avant filtrage
     val folders: List<com.neonscan.app.domain.model.Folder> = emptyList(),
+    val reorderFolders: List<com.neonscan.app.domain.model.Folder> = emptyList(),
+    val isReorderMode: Boolean = false,
     val selected: ScanDocument? = null,
     val selectedIds: Set<Long> = emptySet(),
     val filter: FilesFilter = FilesFilter(),
@@ -45,6 +51,10 @@ class FilesViewModel @Inject constructor(
     private val getScanDocumentUseCase: GetScanDocumentUseCase,
     private val createFolderUseCase: CreateFolderUseCase,
     private val getFoldersUseCase: GetFoldersUseCase,
+    private val getFolderUseCase: GetFolderUseCase,
+    private val updateFolderUseCase: UpdateFolderUseCase,
+    private val deleteFolderUseCase: DeleteFolderUseCase,
+    private val reorderFoldersUseCase: ReorderFoldersUseCase,
     private val assignDocumentToFolderUseCase: AssignDocumentToFolderUseCase,
     private val getDocumentsByFolderUseCase: GetDocumentsByFolderUseCase,
     private val renameScanDocumentUseCase: RenameScanDocumentUseCase
@@ -78,7 +88,12 @@ class FilesViewModel @Inject constructor(
     private fun observeFolders() {
         viewModelScope.launch {
             getFoldersUseCase().collect { folders ->
-                _state.update { it.copy(folders = folders) }
+                _state.update {
+                    it.copy(
+                        folders = folders,
+                        reorderFolders = if (it.isReorderMode && it.reorderFolders.isEmpty()) folders else it.reorderFolders
+                    )
+                }
             }
         }
     }
@@ -162,6 +177,38 @@ class FilesViewModel @Inject constructor(
     fun openFolder(folderId: Long?) {
         val target = if (state.value.currentFolderId == folderId) null else folderId
         observeDocuments(target)
+    }
+
+    fun startReorderFolders() {
+        _state.update { it.copy(isReorderMode = true, reorderFolders = it.folders) }
+    }
+
+    fun updateReorderList(newList: List<com.neonscan.app.domain.model.Folder>) {
+        _state.update { it.copy(reorderFolders = newList) }
+    }
+
+    fun finishReorder(save: Boolean) {
+        viewModelScope.launch {
+            if (save) {
+                val orderedIds = state.value.reorderFolders.map { it.id }
+                reorderFoldersUseCase(orderedIds)
+            }
+            _state.update { it.copy(isReorderMode = false, reorderFolders = emptyList()) }
+        }
+    }
+
+    suspend fun getFolder(id: Long): com.neonscan.app.domain.model.Folder? = getFolderUseCase(id)
+
+    fun updateFolder(id: Long, name: String, colorHex: String) {
+        viewModelScope.launch {
+            updateFolderUseCase(id, name, colorHex)
+        }
+    }
+
+    fun deleteFolder(id: Long) {
+        viewModelScope.launch {
+            deleteFolderUseCase(id)
+        }
     }
 
     fun renameDocument(id: Long, title: String) {

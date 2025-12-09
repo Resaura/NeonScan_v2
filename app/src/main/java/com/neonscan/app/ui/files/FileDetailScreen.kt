@@ -1,5 +1,6 @@
 ﻿package com.neonscan.app.ui.files
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -39,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,8 +58,13 @@ import androidx.compose.ui.unit.dp
 import com.neonscan.app.core.DateFormatter
 import com.neonscan.app.domain.model.ScanDocument
 import com.neonscan.app.domain.model.ScanType
+import com.neonscan.app.ui.common.NeonCircleIconButton
 import com.neonscan.app.ui.common.extractExtensionFromPath
 import com.neonscan.app.R
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import com.neonscan.app.data.file.ShareExportManager
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -75,6 +85,9 @@ fun FileDetailScreen(
     val scrollState = rememberScrollState()
     val maxImageHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.5f).coerceAtLeast(200.dp)
     val density = LocalDensity.current
+    val context = LocalContext.current
+    val shareExportManager = remember { ShareExportManager(context.applicationContext) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(document?.path) {
         if (document?.path.isNullOrBlank()) {
@@ -257,6 +270,59 @@ fun FileDetailScreen(
                     Text(typeLabel, style = MaterialTheme.typography.bodyMedium)
                     Text("Pages : ${document.pageCount}", style = MaterialTheme.typography.bodyMedium)
                     Text(stringResource(R.string.file_detail_created_label, DateFormatter.format(document.createdAt)), style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        NeonCircleIconButton(
+                            icon = Icons.Default.Download,
+                            contentDescription = "Télécharger"
+                        ) {
+                            val path = pagePaths.getOrNull(currentPageIndex) ?: document.path
+                            if (path.isNullOrBlank()) {
+                                Toast.makeText(context, "Aucun fichier à exporter", Toast.LENGTH_SHORT).show()
+                                return@NeonCircleIconButton
+                            }
+                            val mime = mimeForPath(path, document.type)
+                            val displayName = buildDisplayName(document.title, currentPageIndex, mime)
+                            scope.launch {
+                                val uri = if (mime.startsWith("image/")) {
+                                    shareExportManager.exportImage(path, displayName)
+                                } else {
+                                    shareExportManager.exportDocument(path, mime, displayName)
+                                }
+                                Toast.makeText(
+                                    context,
+                                    if (uri != null) "Fichier enregistré" else "Échec de l'export",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        NeonCircleIconButton(
+                            icon = Icons.Default.Share,
+                            contentDescription = "Partager"
+                        ) {
+                            val path = pagePaths.getOrNull(currentPageIndex) ?: document.path
+                            if (path.isNullOrBlank()) {
+                                Toast.makeText(context, "Aucun fichier à partager", Toast.LENGTH_SHORT).show()
+                                return@NeonCircleIconButton
+                            }
+                            val mime = mimeForPath(path, document.type)
+                            scope.launch {
+                                val uri = shareExportManager.shareUri(path, mime)
+                                if (uri != null) {
+                                    val intent = shareExportManager.buildShareIntent(uri, mime)
+                                    context.startActivity(Intent.createChooser(intent, "Partager le scan").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                } else {
+                                    Toast.makeText(context, "Impossible de préparer le partage", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -297,6 +363,32 @@ private fun collectPagePaths(primaryPath: String): List<String> {
         ?.map { it.absolutePath }
         ?: emptyList()
     return if (files.isNotEmpty()) files else listOf(primaryPath)
+}
+
+private fun mimeForPath(path: String?, type: ScanType): String {
+    val ext = extractExtensionFromPath(path)?.lowercase().orEmpty()
+    return when {
+        type == ScanType.IMAGE || ext in setOf("jpg", "jpeg", "png", "webp") -> "image/jpeg"
+        type == ScanType.PDF || ext == "pdf" -> "application/pdf"
+        ext == "doc" || ext == "docx" -> "application/msword"
+        ext == "xls" || ext == "xlsx" -> "application/vnd.ms-excel"
+        else -> "application/octet-stream"
+    }
+}
+
+private fun buildDisplayName(title: String, pageIndex: Int, mime: String): String {
+    val base = title.ifBlank { "scan" }
+        .replace(Regex("[^A-Za-z0-9_\\- ]"), "_")
+        .trim()
+        .ifBlank { "scan" }
+    val ext = when {
+        mime.startsWith("image/") -> "jpg"
+        mime == "application/pdf" -> "pdf"
+        mime.contains("msword") -> "doc"
+        mime.contains("ms-excel") -> "xls"
+        else -> "bin"
+    }
+    return "${base}_${pageIndex + 1}.$ext"
 }
 
 

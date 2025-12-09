@@ -16,4 +16,8 @@ interface ScanRepository {
 
     suspend fun createFolder(name: String): Long
     fun getFolders(): Flow<List<Folder>>
+    suspend fun getFolderById(id: Long): Folder?
+    suspend fun updateFolder(id: Long, name: String, colorHex: String)
+    suspend fun deleteFolder(id: Long)
+    suspend fun updateFolderOrders(order: List<Pair<Long, Int>>)
 }

@@ -12,7 +12,7 @@ import com.neonscan.app.data.local.db.FolderEntityDao
 
 @Database(
     entities = [ScanDocumentEntity::class, FolderEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(ScanTypeConverter::class, DocumentKindConverter::class)
