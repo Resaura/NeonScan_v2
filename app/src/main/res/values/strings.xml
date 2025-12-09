@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">NeonScan</string>
+    <string name="file_detail_created_label">Créé le : %1$s</string>
 </resources>

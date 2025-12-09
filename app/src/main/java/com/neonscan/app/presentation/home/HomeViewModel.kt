@@ -9,6 +9,8 @@ import com.neonscan.app.domain.usecase.CreateScanDocumentUseCase
 import com.neonscan.app.domain.usecase.CreateScanInput
 import com.neonscan.app.domain.usecase.GetFoldersUseCase
 import com.neonscan.app.domain.usecase.GetRecentScansUseCase
+import com.neonscan.app.domain.usecase.DeleteScanDocumentUseCase
+import com.neonscan.app.domain.usecase.GetScanDocumentUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +35,9 @@ class HomeViewModel @Inject constructor(
     private val getRecentScansUseCase: GetRecentScansUseCase,
     private val createScanDocumentUseCase: CreateScanDocumentUseCase,
     private val getFoldersUseCase: GetFoldersUseCase,
-    private val assignDocumentToFolderUseCase: AssignDocumentToFolderUseCase
+    private val assignDocumentToFolderUseCase: AssignDocumentToFolderUseCase,
+    private val deleteScanDocumentUseCase: DeleteScanDocumentUseCase,
+    private val getScanDocumentUseCase: GetScanDocumentUseCase
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
@@ -99,6 +103,13 @@ class HomeViewModel @Inject constructor(
                 assignDocumentToFolderUseCase(listOf(targetId), folderId)
             }
             _state.update { it.copy(showAssignDialogFor = null) }
+        }
+    }
+
+    fun deleteDocument(documentId: Long) {
+        viewModelScope.launch {
+            val doc = getScanDocumentUseCase(documentId) ?: return@launch
+            deleteScanDocumentUseCase(doc)
         }
     }
 }

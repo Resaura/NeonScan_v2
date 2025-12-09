@@ -47,12 +47,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.neonscan.app.core.DateFormatter
 import com.neonscan.app.domain.model.ScanDocument
 import com.neonscan.app.domain.model.ScanType
 import com.neonscan.app.ui.common.extractExtensionFromPath
+import com.neonscan.app.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -156,11 +158,13 @@ fun FileDetailScreen(
                         .fillMaxWidth()
                         .heightIn(min = 200.dp, max = maxImageHeight),
                     shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                    border = null,
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
                     val imgModifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 220.dp)
+                        .heightIn(min = 220.dp, max = maxImageHeight)
                         .pointerInput(pagePaths, currentPageIndex) {
                             val threshold = with(density) { 48.dp.toPx() }
                             var accumulated = 0f
@@ -188,8 +192,8 @@ fun FileDetailScreen(
                             contentDescription = "Apercu du scan",
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 220.dp),
-                            contentScale = ContentScale.FillWidth
+                                .height(maxImageHeight),
+                            contentScale = ContentScale.Fit
                         )
                         if (pageCount > 1) {
                             IconButton(
@@ -252,7 +256,7 @@ fun FileDetailScreen(
                     }
                     Text(typeLabel, style = MaterialTheme.typography.bodyMedium)
                     Text("Pages : ${document.pageCount}", style = MaterialTheme.typography.bodyMedium)
-                    Text("CrÃ©Ã© le : ${DateFormatter.format(document.createdAt)}", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.file_detail_created_label, DateFormatter.format(document.createdAt)), style = MaterialTheme.typography.bodyMedium)
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -294,4 +298,8 @@ private fun collectPagePaths(primaryPath: String): List<String> {
         ?: emptyList()
     return if (files.isNotEmpty()) files else listOf(primaryPath)
 }
+
+
+
+
 

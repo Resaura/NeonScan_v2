@@ -146,7 +146,7 @@ fun FilesScreen(
     if (state.showAssignDialogFor != null || state.selectedIds.isNotEmpty()) {
         AssignFolderDialog(
             folders = state.folders,
-            onDismiss = { onShowAssign(null) },
+            onDismiss = { onShowAssign(null); onClearSelection() },
             onAssign = { folderId -> onAssignToFolder(folderId) }
         )
     }

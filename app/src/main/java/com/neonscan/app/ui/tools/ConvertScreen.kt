@@ -51,6 +51,7 @@ fun ConvertScreen(
 ) {
     val state = viewModel.state.collectAsState().value
     var showFilter by remember { mutableStateOf(false) }
+    var pendingDocId by remember { mutableStateOf<Long?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -111,7 +112,7 @@ fun ConvertScreen(
                             title = doc.title,
                             subtitle = pageLabel(doc.pageCount),
                             leadingIcon = fileTypeIconForExtension(extractExtensionFromPath(doc.path)),
-                            onClick = { viewModel.convert(doc.id) }
+                            onClick = { pendingDocId = doc.id }
                         )
                     }
                 }
@@ -127,6 +128,29 @@ fun ConvertScreen(
             onSelect = {
                 viewModel.setFilter(if (it == target) null else it)
                 showFilter = false
+            }
+        )
+    }
+
+    pendingDocId?.let { docId ->
+        AlertDialog(
+            onDismissRequest = { pendingDocId = null },
+            title = { Text("Conversion du fichier") },
+            text = { Text("Voulez-vous ${convertTitle(target)} en le dupliquant ou en le remplaçant ?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDocId = null
+                    viewModel.convert(docId, replace = false)
+                }) { Text("Dupliquer") }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { pendingDocId = null }) { Text("Annuler") }
+                    TextButton(onClick = {
+                        pendingDocId = null
+                        viewModel.convert(docId, replace = true)
+                    }) { Text("Remplacer") }
+                }
             }
         )
     }

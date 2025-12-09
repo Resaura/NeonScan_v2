@@ -1,8 +1,11 @@
 package com.neonscan.app.presentation.tools
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -81,7 +84,7 @@ class ConvertViewModel @Inject constructor(
         }
     }
 
-    fun convert(documentId: Long) {
+    fun convert(documentId: Long, replace: Boolean) {
         val doc = _state.value.documents.find { it.id == documentId } ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching { performConversion(doc) }
@@ -91,6 +94,12 @@ class ConvertViewModel @Inject constructor(
                     val newBase = current.baseDocuments.filterNot { it.id == doc.id }
                     val newDocs = applyFilter(newBase, current.filter, newExcluded)
                     current.copy(excludedIds = newExcluded, baseDocuments = newBase, documents = newDocs)
+                }
+                if (replace) {
+                    runCatching {
+                        repository.delete(doc)
+                        fileStorageManager.deleteDocument(doc.path)
+                    }
                 }
                 _events.emit(ConvertEvent.Success("Conversion en ${targetType.name} terminee."))
             }.onFailure {
@@ -168,7 +177,11 @@ class ConvertViewModel @Inject constructor(
 
     private suspend fun convertToImage(doc: ScanDocument): StoredScanResult {
         val bitmap = BitmapFactory.decodeFile(doc.path)
-            ?: throw IllegalStateException("Source non lisible")
+            ?: renderPdfFirstPage(doc.path)
+            ?: renderTextBitmap(
+                withContext(Dispatchers.IO) { runCatching { File(doc.path).readText() }.getOrDefault("") }
+                    .ifBlank { "Document converti" }
+            )
         return fileStorageManager.saveBitmap(bitmap, "jpg")
     }
 
@@ -184,6 +197,44 @@ class ConvertViewModel @Inject constructor(
     private suspend fun convertToCsv(doc: ScanDocument): StoredScanResult {
         val csv = "Document,Origine,Date\n${doc.title},${doc.path},${System.currentTimeMillis()}"
         return fileStorageManager.saveBytes(csv.toByteArray(), "xls")
+    }
+
+    private fun renderPdfFirstPage(path: String): Bitmap? = runCatching {
+        val file = File(path)
+        val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        descriptor.use { pfd ->
+            PdfRenderer(pfd).use { renderer ->
+                if (renderer.pageCount <= 0) return null
+                renderer.openPage(0).use { page ->
+                    val width = (page.width * 2)
+                    val height = (page.height * 2)
+                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bitmap
+                }
+            }
+        }
+    }.getOrNull()
+
+    private fun renderTextBitmap(text: String): Bitmap {
+        val paint = Paint().apply {
+            isAntiAlias = true
+            textSize = 32f
+            color = android.graphics.Color.BLACK
+        }
+        val lines = text.lines().ifEmpty { listOf("Document") }
+        val maxWidth = lines.maxOf { paint.measureText(it).toInt().coerceAtLeast(200) }
+        val lineHeight = (paint.textSize * 1.5f).toInt()
+        val height = (lines.size * lineHeight + 40).coerceAtLeast(200)
+        val bmp = Bitmap.createBitmap(maxWidth + 80, height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        var y = 40f
+        lines.forEach {
+            canvas.drawText(it, 40f, y, paint)
+            y += lineHeight
+        }
+        return bmp
     }
 
     private fun mapTarget(raw: String?): ScanType {

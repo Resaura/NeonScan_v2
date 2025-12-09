@@ -55,7 +55,7 @@ fun HomeRoute(
     onQuickScan: () -> Unit,
     onBatchScan: () -> Unit,
     onOpenDocument: (Long) -> Unit,
-    onDeleteDocument: (Long) -> Unit = {},
+    onDeleteDocument: (Long) -> Unit = { viewModel.deleteDocument(it) },
     onAssignToFolder: (Long) -> Unit = { viewModel.showAssignDialog(it) },
     onConfirmAssign: (Long?) -> Unit = { viewModel.assignToFolder(it) },
     onDismissAssign: () -> Unit = { viewModel.showAssignDialog(null) },
@@ -303,10 +303,10 @@ private fun HomeRecentItem(
                             expanded = false
                             if (hasFolder) onRemoveFromFolder() else onAssign()
                         }
-                    )
-                }
-            }
+            )
         }
+    }
+}
     }
 }
 
